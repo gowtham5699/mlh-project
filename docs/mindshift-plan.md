@@ -81,6 +81,50 @@ flowchart LR
 - Generation is greedy for deterministic comparison; the seed is still set for any sampling mode. Baseline and steered runs share identical kwargs.
 - Not done: fine-tuning, concurrent inference, extra concepts, polished UI.
 
+## Winning strategy (2-hour budget)
+Focus: one robust pirate concept with visible, measured evidence that this is real activation steering (not prompting). No extra concepts.
+
+### Demo and UI
+- Variable alpha slider (the interactive pitch). Default alpha and layer chosen from the layer sweep: clear style shift while still fluent.
+- Sweep view: same prompt at alpha 0, 0.5, 1.0, 1.5 side by side to show the dial and where fluency breaks (also in the evaluation script).
+- Three clickable example prompts in the UI.
+- Third column "prompted" (real generation using a pirate system prompt, no steering) next to baseline and steered, to show steering is a different mechanism. Cuttable, see cut list.
+
+### Vector quality
+- 20+ contrastive pairs across varied topics, matched structure (same content, pirate vs plain phrasing).
+- Same chat template as generation; read a well-defined token position (last token by default, mean-over-tokens as option). Test `hidden_states[L+1]` indexing against the hook output.
+- Layer sweep (e.g. 8, 12, 16, 20) to pick the default; fallbacks if weak: other layers, other pooling, steer generated tokens only.
+- Optional "generated tokens only" steering mode in `steering.py` in addition to all positions.
+
+### Evaluation and evidence
+- Three fixed varied prompts: an explanation ("Explain gravity"), a how-to, and a short advice/factual question. Fixed seed, greedy decoding, identical settings.
+- 2-3 held-out prompts not used to build the vector, to show generalization.
+- Pirate-word score (count of markers such as arr, matey, ye) across alphas, shown as a small chart.
+- Fluency: perplexity of steered text under the unsteered model plus repetition and non-ASCII heuristics; log where steering harms fluency.
+- Alpha=0 check: identical token IDs under greedy decoding (logits may differ in last bits on CUDA bf16). Hidden-state delta check equals alpha * vector.
+- Save all results with seed and settings into README and `eval_results.md`.
+
+### Robustness
+- API limits: caps on `max_new_tokens` and prompt length, validation of strength and layer, request timeout; `/health` reports loading state and device; `/concepts` lists available layers.
+- Streamlit request timeout long enough for generation.
+- Add `.gitignore` (venv, HF cache, `__pycache__`); commit the built pirate vector (small) so teammates skip the build step.
+- Saved real example outputs in README as a demo fallback (never fabricated).
+
+### Time budget
+- 0:00-0:20 scaffold, runtime, hook, tiny-model tests (Phases 1-2)
+- 0:20-0:45 vector builder, build on 4060 with Qwen3, layer sweep
+- 0:45-1:10 FastAPI with baseline, steered, prompted outputs
+- 1:10-1:30 Streamlit UI with examples and sweep view
+- 1:30-1:50 evaluation script, chart, README
+- 1:50-2:00 buffer, demo recording, final push
+- Gate: if no visible steering effect after the vector build, spend buffer on layers and pooling before building more.
+
+### Cut list (not in focus now; cut in this order if behind)
+1. Prompted-comparison column.
+2. Sweep view in the UI (keep in evaluation script).
+3. Perplexity metric (keep pirate score).
+4. Held-out prompts.
+
 ## Decisions made
 - Vector normalization: ON by default. Save the raw mean-difference vector plus metadata (raw norm, mean last-token hidden norm at that layer). At load time, steering vector = unit(raw) * mean_hidden_norm, so alpha is relative to typical activation magnitude (useful slider range roughly 0-1.5). A `normalize` flag allows raw behavior. The formula stays `hidden + alpha * steering_vector`.
 - Hardware: develop here, test and demo on the 4060 laptop; no Ollama.

@@ -28,10 +28,15 @@ isProject: false
 
 # MindShift: Activation Steering Lab - Plan
 
-## Environment findings
+## Environment and workflow (updated)
 - Workspace is empty (only `.git`, `LICENSE`). I will create `mindshift/` as a subfolder per your layout.
-- Python 3.13.7 is installed (satisfies 3.11+). No NVIDIA GPU was detected, so the default is CPU. Qwen3-1.7B on CPU in bf16/fp32 yields a few tokens/sec. I will default to `max_new_tokens=64`, and use float32 on CPU (bf16 is slow on CPU) and bfloat16/float16 on CUDA.
-- Risk: PyTorch wheels for Python 3.13 are available for recent torch releases, but if install fails I will use a 3.11/3.12 venv.
+- Dev machine (this one): Windows, Python 3.13.7, no NVIDIA GPU. Used to write code, run the fast pytest suite, and run real smoke tests on a small HF model on CPU.
+- Demo machine: Windows laptop with an RTX 4060 (8 GB). Use Python 3.11/3.12 and the CUDA build of PyTorch (e.g. `pip install torch --index-url https://download.pytorch.org/whl/cu124`). Qwen3-1.7B in bf16 (~4 GB) fits. Run backend and Streamlit there (no SSH required); `git pull` to sync.
+- Ollama is NOT used: GGUF/llama.cpp exposes no hidden states or module hooks. Models come from Hugging Face via `transformers`.
+- Configurable `MODEL_ID`: `Qwen/Qwen2.5-0.5B-Instruct` (~1 GB, closest family to Qwen3, CPU-friendly) for local smoke tests; `Qwen/Qwen3-1.7B` for the final demo. The runtime passes `enable_thinking=False` only when the chat template supports it.
+- Test tiers: (1) tiny random-config model, no download, for hook logic; (2) Qwen2.5-0.5B on this machine for end-to-end; (3) Qwen3-1.7B on the 4060 for evaluation and demo.
+- Add `scripts/smoke_test.py` printing clear pass/fail per phase so results can be pasted back from the laptop.
+- Dtype: float32 on CPU, bfloat16 on CUDA (float16 fallback).
 
 ## Architecture
 
@@ -76,6 +81,10 @@ flowchart LR
 - Generation is greedy for deterministic comparison; the seed is still set for any sampling mode. Baseline and steered runs share identical kwargs.
 - Not done: fine-tuning, concurrent inference, extra concepts, polished UI.
 
-## Open decisions to confirm before implementing
+## Decisions made
+- Vector normalization: ON by default. Save the raw mean-difference vector plus metadata (raw norm, mean last-token hidden norm at that layer). At load time, steering vector = unit(raw) * mean_hidden_norm, so alpha is relative to typical activation magnitude (useful slider range roughly 0-1.5). A `normalize` flag allows raw behavior. The formula stays `hidden + alpha * steering_vector`.
+- Hardware: develop here, test and demo on the 4060 laptop; no Ollama.
+
+## Previously open decisions (superseded by the above)
 - Keep raw (unnormalized) vectors as specified, or normalize to unit norm and scale by the layer's average hidden norm so slider values are comparable across layers? My recommendation: store the raw vector as specified, and add an optional normalized mode.
 - Since there is no GPU, are you okay with CPU generation at ~64 tokens per request (tens of seconds per baseline+steered pair), or do you have a GPU machine or Colab to run the backend on?

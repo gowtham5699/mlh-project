@@ -91,7 +91,7 @@ def build_generation_service() -> ModelGenerationService:
     """Service factory used at FastAPI startup (loads the model once)."""
     runtime = ModelRuntime()
     registry = VectorRegistry(
-        os.getenv("VECTOR_DIR", str(DEFAULT_VECTOR_DIR)),
+        os.getenv("VECTOR_DIR") or str(DEFAULT_VECTOR_DIR),
         normalize=os.getenv("NORMALIZE_VECTORS", "true").lower() != "false",
     )
     logger.info("Loaded concepts: %s", [c.name for c in registry.concepts()])

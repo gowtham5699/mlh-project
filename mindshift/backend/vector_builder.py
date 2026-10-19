@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -11,7 +12,13 @@ from typing import Any, Literal
 import torch
 
 
-Pooling = Literal["last", "mean"]
+# "last":     hidden state of the final token.
+# "mean":     mean over every token (prompt + response, incl. the attention sink).
+# "response": mean over the assistant response tokens only. The shared prompt
+#             cancels in pos - neg anyway, and excluding it (and the massive
+#             first-token "attention sink" activation) gives a cleaner direction
+#             and a realistic per-token hidden norm.
+Pooling = Literal["last", "mean", "response"]
 
 
 @dataclass(frozen=True)
@@ -49,6 +56,18 @@ def load_prompt_pairs(path: str | Path) -> tuple[str, list[PromptPair]]:
     return concept, pairs
 
 
+def _as_input_dict(encoded: Any) -> Mapping:
+    if isinstance(encoded, torch.Tensor):
+        return {
+            "input_ids": encoded,
+            "attention_mask": torch.ones_like(encoded),
+        }
+    # transformers >= 5 returns a BatchEncoding (a UserDict), not a dict.
+    if not isinstance(encoded, Mapping) or "input_ids" not in encoded:
+        raise TypeError("Tokenizer chat template returned unsupported inputs")
+    return encoded
+
+
 class ActivationVectorBuilder:
     def __init__(self, model: Any, tokenizer: Any, model_id: str) -> None:
         self.model = model
@@ -64,20 +83,15 @@ class ActivationVectorBuilder:
             {"role": "user", "content": prompt},
             {"role": "assistant", "content": response},
         ]
-        encoded = self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=True,
-            add_generation_prompt=False,
-            return_tensors="pt",
-            return_dict=True,
+        encoded = _as_input_dict(
+            self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=False,
+                return_tensors="pt",
+                return_dict=True,
+            )
         )
-        if isinstance(encoded, torch.Tensor):
-            encoded = {
-                "input_ids": encoded,
-                "attention_mask": torch.ones_like(encoded),
-            }
-        if not isinstance(encoded, dict) or "input_ids" not in encoded:
-            raise TypeError("Tokenizer chat template returned unsupported inputs")
 
         device = next(self.model.parameters()).device
         return {
@@ -86,13 +100,28 @@ class ActivationVectorBuilder:
             if isinstance(value, torch.Tensor)
         }
 
-    def _pooled_activation(
+    def _prompt_length(self, prompt: str) -> int:
+        """Token count of the generation prompt, as used at inference time."""
+        encoded = _as_input_dict(
+            self.tokenizer.apply_chat_template(
+                [{"role": "user", "content": prompt}],
+                tokenize=True,
+                add_generation_prompt=True,
+                return_tensors="pt",
+                return_dict=True,
+                enable_thinking=False,  # matches ModelRuntime.build_inputs
+            )
+        )
+        return int(encoded["input_ids"].shape[1])
+
+    def _pooled_activations(
         self,
         prompt: str,
         response: str,
-        layer: int,
+        layers: Sequence[int],
         pooling: Pooling,
-    ) -> torch.Tensor:
+    ) -> dict[int, tuple[torch.Tensor, float]]:
+        """Return {layer: (pooled activation, mean per-token norm)}."""
         inputs = self._encode_conversation(prompt, response)
         with torch.inference_mode():
             outputs = self.model(
@@ -105,34 +134,108 @@ class ActivationVectorBuilder:
         hidden_states = outputs.hidden_states
         if hidden_states is None:
             raise RuntimeError("Model did not return hidden states")
-        if layer < 0 or layer + 1 >= len(hidden_states):
-            raise ValueError(
-                f"Layer {layer} is out of range for "
-                f"{len(hidden_states) - 1} decoder layers"
-            )
+        for layer in layers:
+            if layer < 0 or layer + 1 >= len(hidden_states):
+                raise ValueError(
+                    f"Layer {layer} is out of range for "
+                    f"{len(hidden_states) - 1} decoder layers"
+                )
 
-        # hidden_states[0] is the embedding output. hidden_states[L+1] is
-        # decoder layer L's output, matching a forward hook on that layer.
-        hidden = hidden_states[layer + 1]
         attention_mask = inputs.get("attention_mask")
-
-        if pooling == "last":
-            if attention_mask is None:
-                pooled = hidden[:, -1, :]
-            else:
-                last_indices = attention_mask.sum(dim=1) - 1
-                batch_indices = torch.arange(hidden.shape[0], device=hidden.device)
-                pooled = hidden[batch_indices, last_indices]
-        elif pooling == "mean":
-            if attention_mask is None:
-                pooled = hidden.mean(dim=1)
-            else:
-                mask = attention_mask.unsqueeze(-1).to(hidden.dtype)
-                pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1)
-        else:
+        if pooling not in ("last", "mean", "response"):
             raise ValueError(f"Unsupported pooling method: {pooling}")
+        if pooling == "response":
+            seq_len = inputs["input_ids"].shape[1]
+            start = min(self._prompt_length(prompt), seq_len - 1)
 
-        return pooled.squeeze(0).detach().float().cpu()
+        result: dict[int, tuple[torch.Tensor, float]] = {}
+        for layer in layers:
+            # hidden_states[0] is the embedding output. hidden_states[L+1] is
+            # decoder layer L's output, matching a forward hook on that layer.
+            hidden = hidden_states[layer + 1]
+
+            if pooling == "last":
+                if attention_mask is None:
+                    pooled = hidden[:, -1, :]
+                else:
+                    last_indices = attention_mask.sum(dim=1) - 1
+                    batch_indices = torch.arange(
+                        hidden.shape[0], device=hidden.device
+                    )
+                    pooled = hidden[batch_indices, last_indices]
+                token_norm = pooled.float().norm(dim=-1).mean().item()
+            elif pooling == "mean":
+                if attention_mask is None:
+                    pooled = hidden.mean(dim=1)
+                else:
+                    mask = attention_mask.unsqueeze(-1).to(hidden.dtype)
+                    pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1)
+                token_norm = hidden.float().norm(dim=-1).mean().item()
+            else:  # response
+                tokens = hidden[:, start:, :]
+                pooled = tokens.mean(dim=1)
+                token_norm = tokens.float().norm(dim=-1).mean().item()
+
+            result[layer] = (pooled.squeeze(0).detach().float().cpu(), token_norm)
+        return result
+
+    def _pooled_activation(
+        self,
+        prompt: str,
+        response: str,
+        layer: int,
+        pooling: Pooling,
+    ) -> torch.Tensor:
+        return self._pooled_activations(prompt, response, [layer], pooling)[layer][0]
+
+    def build_layers(
+        self,
+        concept: str,
+        pairs: list[PromptPair],
+        layers: Sequence[int],
+        pooling: Pooling = "last",
+    ) -> dict[int, BuiltVector]:
+        """Build one vector per layer using a single forward pass per example."""
+        if not pairs:
+            raise ValueError("At least one prompt pair is required")
+        layers = list(layers)
+        if not layers:
+            raise ValueError("At least one layer is required")
+
+        positive: dict[int, list[torch.Tensor]] = {l: [] for l in layers}
+        negative: dict[int, list[torch.Tensor]] = {l: [] for l in layers}
+        norms: dict[int, list[float]] = {l: [] for l in layers}
+        for pair in pairs:
+            for text, store in ((pair.positive, positive), (pair.negative, negative)):
+                acts = self._pooled_activations(pair.prompt, text, layers, pooling)
+                for layer, (pooled, token_norm) in acts.items():
+                    store[layer].append(pooled)
+                    norms[layer].append(token_norm)
+
+        built: dict[int, BuiltVector] = {}
+        for layer in layers:
+            vector = (
+                torch.stack(positive[layer]).mean(dim=0)
+                - torch.stack(negative[layer]).mean(dim=0)
+            )
+            metadata = {
+                "concept": concept,
+                "model_id": self.model_id,
+                "layer": layer,
+                "shape": list(vector.shape),
+                "method": "mean_difference",
+                "pooling": pooling,
+                "n_pairs": len(pairs),
+                "raw_norm": float(vector.norm().item()),
+                # Mean per-token hidden norm over the pooled tokens. The
+                # registry rescales the unit direction to this value so that
+                # alpha=1 adds roughly one typical token's worth of norm.
+                "mean_hidden_norm": float(sum(norms[layer]) / len(norms[layer])),
+                "normalization": "unit_vector_scaled_by_mean_hidden_norm_at_load",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            built[layer] = BuiltVector(vector=vector, metadata=metadata)
+        return built
 
     def build(
         self,
@@ -141,38 +244,7 @@ class ActivationVectorBuilder:
         layer: int,
         pooling: Pooling = "last",
     ) -> BuiltVector:
-        if not pairs:
-            raise ValueError("At least one prompt pair is required")
-
-        positive = [
-            self._pooled_activation(pair.prompt, pair.positive, layer, pooling)
-            for pair in pairs
-        ]
-        negative = [
-            self._pooled_activation(pair.prompt, pair.negative, layer, pooling)
-            for pair in pairs
-        ]
-        positive_stack = torch.stack(positive)
-        negative_stack = torch.stack(negative)
-        vector = positive_stack.mean(dim=0) - negative_stack.mean(dim=0)
-        all_activations = torch.cat([positive_stack, negative_stack], dim=0)
-
-        metadata = {
-            "concept": concept,
-            "model_id": self.model_id,
-            "layer": layer,
-            "shape": list(vector.shape),
-            "method": "mean_difference",
-            "pooling": pooling,
-            "n_pairs": len(pairs),
-            "raw_norm": float(vector.norm().item()),
-            "mean_hidden_norm": float(
-                all_activations.norm(dim=1).mean().item()
-            ),
-            "normalization": "unit_vector_scaled_by_mean_hidden_norm_at_load",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-        return BuiltVector(vector=vector, metadata=metadata)
+        return self.build_layers(concept, pairs, [layer], pooling)[layer]
 
 
 def save_built_vector(

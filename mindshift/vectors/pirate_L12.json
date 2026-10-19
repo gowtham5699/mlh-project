@@ -1,0 +1,15 @@
+{
+  "concept": "pirate",
+  "model_id": "Qwen/Qwen3-1.7B",
+  "layer": 12,
+  "shape": [
+    2048
+  ],
+  "method": "mean_difference",
+  "pooling": "mean",
+  "n_pairs": 22,
+  "raw_norm": 61.361045837402344,
+  "mean_hidden_norm": 558.4266967773438,
+  "normalization": "unit_vector_scaled_by_mean_hidden_norm_at_load",
+  "created_at": "2026-10-19T17:24:03.609623+00:00"
+}

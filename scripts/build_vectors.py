@@ -1,4 +1,4 @@
-"""Build activation vectors from paired examples."""
+﻿"""Build activation vectors from paired examples."""
 
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ def main() -> None:
         type=Path,
         default=ROOT / "mindshift" / "vectors",
     )
-    parser.add_argument("--pooling", choices=["last", "mean"], default="mean")
+    parser.add_argument("--pooling", choices=["last", "mean", "response"], default="response")
     parser.add_argument("--device", default=os.getenv("DEVICE"))
     args = parser.parse_args()
 
@@ -84,20 +84,20 @@ def main() -> None:
     model.eval()
 
     builder = ActivationVectorBuilder(model, tokenizer, args.model_id)
-    for layer in args.layers:
-        print(f"Building {concept!r} vector at layer {layer}")
-        built = builder.build(
-            concept=concept,
-            pairs=pairs,
-            layer=layer,
-            pooling=args.pooling,
-        )
+    print(f"Building {concept!r} vectors for layers {args.layers} ({args.pooling} pooling)")
+    built_by_layer = builder.build_layers(
+        concept=concept,
+        pairs=pairs,
+        layers=args.layers,
+        pooling=args.pooling,
+    )
+    for layer, built in built_by_layer.items():
         vector_path, metadata_path = save_built_vector(built, args.output)
         print(
-            f"Saved {vector_path} and {metadata_path} "
-            f"(raw norm={built.metadata['raw_norm']:.4f})"
+            f"Saved {vector_path.name} (layer {layer}, raw norm="
+            f"{built.metadata['raw_norm']:.2f}, mean token norm="
+            f"{built.metadata['mean_hidden_norm']:.2f})"
         )
-
 
 if __name__ == "__main__":
     main()

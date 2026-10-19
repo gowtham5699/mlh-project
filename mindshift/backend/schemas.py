@@ -12,12 +12,12 @@ class GenerateRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=8_000)
     concept: str = Field(default="pirate", min_length=1)
     alpha: float = Field(
-        default=0.8,
+        default=0.6,
         ge=0.0,
         le=4.0,
         validation_alias=AliasChoices("alpha", "strength"),
     )
-    layer: int = Field(default=12, ge=0)
+    layer: int = Field(default=11, ge=0)
     max_new_tokens: int = Field(default=128, ge=1, le=512)
     seed: int = Field(default=42, ge=0)
     include_prompted: bool = Field(

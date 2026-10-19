@@ -11,14 +11,14 @@ import streamlit as st
 
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
-DEFAULT_LAYER = int(os.getenv("DEFAULT_LAYER", "12"))
+DEFAULT_LAYER = int(os.getenv("DEFAULT_LAYER", "11"))
 DEFAULT_MOCK_MODE = os.getenv("USE_MOCK_API", "false").lower() in {
     "1",
     "true",
     "yes",
 }
 
-MOCK_CONCEPTS = [{"name": "pirate", "layers": [8, 12, 16]}]
+MOCK_CONCEPTS = [{"name": "pirate", "layers": [9, 11, 12, 13]}]
 
 
 def _concept_names(payload: Any) -> list[str]:
@@ -131,7 +131,7 @@ with st.form("generation-form"):
             "Strength (alpha)",
             min_value=0.0,
             max_value=2.0,
-            value=0.8,
+            value=0.6,
             step=0.1,
             help="Relative to typical activation magnitude at the layer. 0 = baseline.",
         )

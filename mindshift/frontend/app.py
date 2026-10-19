@@ -21,28 +21,48 @@ DEFAULT_MOCK_MODE = os.getenv("USE_MOCK_API", "false").lower() in {
 MOCK_CONCEPTS = [{"name": "pirate", "layers": [9, 11, 12, 13]}]
 
 
-def _concept_names(payload: Any) -> list[str]:
-    """Accept either a bare concept list or {"concepts": [...]}."""
+def _concept_layers(payload: Any) -> dict[str, list[int]]:
+    """Map concept name -> available layers.
+
+    Accepts either a bare concept list or {"concepts": [...]}. Plain string
+    entries have no layer information (empty list).
+    """
     concepts = payload.get("concepts", []) if isinstance(payload, dict) else payload
     if not isinstance(concepts, list):
-        return []
+        return {}
 
-    names: list[str] = []
+    result: dict[str, list[int]] = {}
     for concept in concepts:
         if isinstance(concept, str):
-            names.append(concept)
+            result[concept] = []
         elif isinstance(concept, dict) and isinstance(concept.get("name"), str):
-            names.append(concept["name"])
-    return names
+            layers = concept.get("layers") or []
+            result[concept["name"]] = sorted(
+                {int(layer) for layer in layers if isinstance(layer, int)}
+            )
+    return result
 
 
-def load_concepts(use_mock_api: bool) -> list[str]:
+def load_concepts(use_mock_api: bool) -> dict[str, list[int]]:
     if use_mock_api:
-        return _concept_names(MOCK_CONCEPTS)
+        return _concept_layers(MOCK_CONCEPTS)
 
     response = requests.get(f"{BACKEND_URL}/concepts", timeout=5)
     response.raise_for_status()
-    return _concept_names(response.json())
+    return _concept_layers(response.json())
+
+
+def _error_detail(exc: requests.RequestException) -> str:
+    """Prefer the backend's own error message over the generic HTTP one."""
+    response = getattr(exc, "response", None)
+    if response is not None:
+        try:
+            detail = response.json().get("detail")
+        except (ValueError, AttributeError):
+            detail = None
+        if isinstance(detail, str):
+            return f"{response.status_code}: {detail}"
+    return str(exc)
 
 
 def generate(
@@ -98,10 +118,11 @@ with st.sidebar:
         st.caption(BACKEND_URL)
 
 try:
-    concepts = load_concepts(use_mock_api)
+    concept_layers = load_concepts(use_mock_api)
 except (requests.RequestException, ValueError) as exc:
     st.error(f"Could not load concepts from the backend: {exc}")
-    concepts = []
+    concept_layers = {}
+concepts = list(concept_layers)
 
 EXAMPLE_PROMPTS = [
     "Explain gravity to a ten-year-old.",
@@ -113,35 +134,50 @@ example = st.selectbox(
     "Example prompts", ["(custom)"] + EXAMPLE_PROMPTS, key="example-prompt"
 )
 
+# Concept and layer live outside the form so the layer list refreshes as soon
+# as the concept changes (widgets inside a form only update on submit).
+pick_left, pick_right = st.columns(2)
+with pick_left:
+    concept = st.selectbox(
+        "Steering concept",
+        concepts,
+        disabled=not concepts,
+    )
+available_layers = concept_layers.get(concept, []) if concept else []
+with pick_right:
+    if available_layers:
+        layer = st.selectbox(
+            "Decoder layer",
+            available_layers,
+            index=(
+                available_layers.index(DEFAULT_LAYER)
+                if DEFAULT_LAYER in available_layers
+                else 0
+            ),
+            help="Only layers with a built steering vector are listed.",
+        )
+    else:
+        layer = None
+        st.selectbox("Decoder layer", [], disabled=True)
+        if concept:
+            st.caption(
+                f"No layers reported for '{concept}'. Run scripts/build_vectors.py."
+            )
+
 with st.form("generation-form"):
     prompt = st.text_area(
         "Prompt",
         value=example if example != "(custom)" else "Explain how a compass works.",
         height=140,
     )
-    concept = st.selectbox(
-        "Steering concept",
-        concepts,
-        disabled=not concepts,
+    strength = st.slider(
+        "Strength (alpha)",
+        min_value=0.0,
+        max_value=2.0,
+        value=0.6,
+        step=0.1,
+        help="Relative to typical activation magnitude at the layer. 0 = baseline.",
     )
-
-    control_left, control_right = st.columns(2)
-    with control_left:
-        strength = st.slider(
-            "Strength (alpha)",
-            min_value=0.0,
-            max_value=2.0,
-            value=0.6,
-            step=0.1,
-            help="Relative to typical activation magnitude at the layer. 0 = baseline.",
-        )
-    with control_right:
-        layer = st.number_input(
-            "Decoder layer",
-            min_value=0,
-            value=DEFAULT_LAYER,
-            step=1,
-        )
 
     include_prompted = st.checkbox(
         "Also show a prompt-engineered answer (no steering) for comparison",
@@ -151,7 +187,7 @@ with st.form("generation-form"):
     submitted = st.form_submit_button(
         "Generate comparison",
         type="primary",
-        disabled=not concepts,
+        disabled=not concepts or layer is None,
     )
 
 if submitted:
@@ -188,7 +224,9 @@ if submitted:
                 "Latency",
                 f"{result.get('latency_ms', 0):,.1f} ms",
             )
-        except (requests.RequestException, ValueError) as exc:
+        except requests.RequestException as exc:
+            st.error(f"Generation failed: {_error_detail(exc)}")
+        except ValueError as exc:
             st.error(f"Generation failed: {exc}")
 
 with st.expander("How activation steering works"):

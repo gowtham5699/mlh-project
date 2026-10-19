@@ -12,7 +12,7 @@ import streamlit as st
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
 DEFAULT_LAYER = int(os.getenv("DEFAULT_LAYER", "12"))
-DEFAULT_MOCK_MODE = os.getenv("USE_MOCK_API", "true").lower() in {
+DEFAULT_MOCK_MODE = os.getenv("USE_MOCK_API", "false").lower() in {
     "1",
     "true",
     "yes",

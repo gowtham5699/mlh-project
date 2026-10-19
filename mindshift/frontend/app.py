@@ -51,6 +51,7 @@ def generate(
     strength: float,
     layer: int,
     use_mock_api: bool,
+    include_prompted: bool = False,
 ) -> dict[str, Any]:
     if use_mock_api:
         started = time.perf_counter()
@@ -76,8 +77,9 @@ def generate(
             "concept": concept,
             "alpha": strength,
             "layer": layer,
+            "include_prompted": include_prompted,
         },
-        timeout=180,
+        timeout=300,
     )
     response.raise_for_status()
     return response.json()
@@ -90,7 +92,10 @@ st.caption("Compare a model's normal response with an activation-steered respons
 with st.sidebar:
     st.header("Connection")
     use_mock_api = st.toggle("Demo mode", value=DEFAULT_MOCK_MODE)
-    st.caption("Using sample responses" if use_mock_api else BACKEND_URL)
+    if use_mock_api:
+        st.warning("Demo mode: canned sample text, NOT model output.")
+    else:
+        st.caption(BACKEND_URL)
 
 try:
     concepts = load_concepts(use_mock_api)
@@ -98,10 +103,20 @@ except (requests.RequestException, ValueError) as exc:
     st.error(f"Could not load concepts from the backend: {exc}")
     concepts = []
 
+EXAMPLE_PROMPTS = [
+    "Explain gravity to a ten-year-old.",
+    "Give me three tips for preparing for a job interview.",
+    "Describe how a lighthouse helps ships at night.",
+]
+
+example = st.selectbox(
+    "Example prompts", ["(custom)"] + EXAMPLE_PROMPTS, key="example-prompt"
+)
+
 with st.form("generation-form"):
     prompt = st.text_area(
         "Prompt",
-        value="Explain how a compass works.",
+        value=example if example != "(custom)" else "Explain how a compass works.",
         height=140,
     )
     concept = st.selectbox(
@@ -115,9 +130,10 @@ with st.form("generation-form"):
         strength = st.slider(
             "Strength (alpha)",
             min_value=0.0,
-            max_value=1.5,
+            max_value=2.0,
             value=0.8,
             step=0.1,
+            help="Relative to typical activation magnitude at the layer. 0 = baseline.",
         )
     with control_right:
         layer = st.number_input(
@@ -126,6 +142,11 @@ with st.form("generation-form"):
             value=DEFAULT_LAYER,
             step=1,
         )
+
+    include_prompted = st.checkbox(
+        "Also show a prompt-engineered answer (no steering) for comparison",
+        value=False,
+    )
 
     submitted = st.form_submit_button(
         "Generate comparison",
@@ -145,15 +166,20 @@ if submitted:
                     strength=strength,
                     layer=int(layer),
                     use_mock_api=use_mock_api,
+                    include_prompted=include_prompted,
                 )
 
-            baseline_column, steered_column = st.columns(2)
-            with baseline_column:
+            columns = st.columns(3 if result.get("prompted") else 2)
+            with columns[0]:
                 st.subheader("Baseline")
                 st.write(result.get("baseline", "No baseline response returned."))
-            with steered_column:
+            with columns[1]:
                 st.subheader("Steered")
                 st.write(result.get("steered", "No steered response returned."))
+            if result.get("prompted"):
+                with columns[2]:
+                    st.subheader("Prompted (no steering)")
+                    st.write(result["prompted"])
 
             metric_left, metric_middle, metric_right = st.columns(3)
             metric_left.metric("Layer", result.get("layer", layer))

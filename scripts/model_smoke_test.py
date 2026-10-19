@@ -1,8 +1,8 @@
-"""Real-model smoke test for phases 1-2.
+"""Real-model smoke test for phases 1-2 (loads the actual model).
 
-Run from the mindshift/ directory:
-    python -m scripts.smoke_test                       # uses MODEL_ID or Qwen3-1.7B
-    MODEL_ID=Qwen/Qwen2.5-0.5B-Instruct python -m scripts.smoke_test
+Run from the repo root:
+    python -m scripts.model_smoke_test                  # uses MODEL_ID or Qwen3-1.7B
+    MODEL_ID=Qwen/Qwen2.5-0.5B-Instruct python -m scripts.model_smoke_test
 Prints PASS/FAIL per check so results are easy to paste back.
 """
 import logging
@@ -10,8 +10,8 @@ import sys
 
 import torch
 
-from backend.model_runtime import ModelRuntime, SteeringSpec
-from backend.steering import LayerOutputCapture, SteeringHook, count_hooks
+from mindshift.backend.model_runtime import ModelRuntime, SteeringSpec
+from mindshift.backend.steering import LayerOutputCapture, SteeringHook, count_hooks
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 PROMPT = "Explain gravity in two sentences."

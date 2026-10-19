@@ -67,7 +67,7 @@ def main() -> None:
         type=Path,
         default=ROOT / "mindshift" / "vectors",
     )
-    parser.add_argument("--pooling", choices=["last", "mean"], default="last")
+    parser.add_argument("--pooling", choices=["last", "mean"], default="mean")
     parser.add_argument("--device", default=os.getenv("DEVICE"))
     args = parser.parse_args()
 
@@ -76,10 +76,11 @@ def main() -> None:
     print(f"Loading {args.model_id} on {device} ({dtype})")
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_id)
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model_id,
-        torch_dtype=dtype,
-    ).to(device)
+    try:  # transformers >= 4.56 / 5.x
+        model = AutoModelForCausalLM.from_pretrained(args.model_id, dtype=dtype)
+    except TypeError:  # older transformers
+        model = AutoModelForCausalLM.from_pretrained(args.model_id, torch_dtype=dtype)
+    model = model.to(device)
     model.eval()
 
     builder = ActivationVectorBuilder(model, tokenizer, args.model_id)

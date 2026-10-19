@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from mindshift.evaluation import non_ascii_ratio, repetition_ratio
+from mindshift.evaluation import non_ascii_ratio, pirate_score, repetition_ratio
 
 
 PROMPTS = [
@@ -90,13 +90,14 @@ def render_report(
         "",
         "## Fluency-harm summary",
         "",
-        "| Prompt | Alpha | Repetition ratio | Non-ASCII ratio | Latency (ms) |",
-        "|---|---:|---:|---:|---:|",
+        "| Prompt | Alpha | Pirate score (per 100 words) | Repetition ratio | Non-ASCII ratio | Latency (ms) |",
+        "|---|---:|---:|---:|---:|---:|",
     ]
     for result in results:
         prompt_label = result["prompt"].replace("|", "\\|")
         lines.append(
             f"| {prompt_label} | {result['alpha']:g} | "
+            f"{result.get('pirate_score', 0.0):.1f} | "
             f"{result['repetition_ratio']:.3f} | "
             f"{result['non_ascii_ratio']:.3f} | "
             f"{result['latency_ms']:.1f} |"
@@ -169,6 +170,7 @@ def main() -> None:
                     "alpha": alpha,
                     "baseline": str(payload["baseline"]),
                     "steered": steered,
+                    "pirate_score": pirate_score(steered),
                     "repetition_ratio": repetition_ratio(steered),
                     "non_ascii_ratio": non_ascii_ratio(steered),
                     "latency_ms": float(payload["latency_ms"]),

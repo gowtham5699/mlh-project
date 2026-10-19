@@ -106,12 +106,29 @@ def test_generate_passes_validated_request_to_service(
         "steered": "Arrr, steered response!",
         "concept": "pirate",
         "alpha": 0.8,
+        "strength": 0.8,
+        "prompted": None,
         "layer": 12,
         "latency_ms": 12.5,
     }
     assert service.last_request is not None
     assert service.last_request.prompt == "Explain gravity."
     assert service.last_request.seed == 7
+
+
+def test_generate_accepts_strength_alias(
+    client: TestClient,
+    service: FakeGenerationService,
+) -> None:
+    response = client.post(
+        "/generate",
+        json={"prompt": "Explain gravity", "concept": "pirate", "strength": 2.0, "layer": 12},
+    )
+
+    assert response.status_code == 200
+    assert service.last_request is not None
+    assert service.last_request.alpha == 2.0
+    assert response.json()["strength"] == 2.0
 
 
 @pytest.mark.parametrize(

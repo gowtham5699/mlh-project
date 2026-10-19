@@ -60,12 +60,15 @@ recorded in the metadata.
 
 ## Run
 
-Start the backend after the Phase 1–2 runtime is connected to the service
-factory in `mindshift/backend/main.py`:
+Start the backend (loads the model and the vectors in `mindshift/vectors/`
+once at startup; build vectors first):
 
 ```bash
-uvicorn mindshift.backend.main:app --host 0.0.0.0 --port 8000
+uvicorn mindshift.backend.main:app --host 127.0.0.1 --port 8000
 ```
+
+The request accepts `alpha` (or its alias `strength`); `include_prompted: true`
+adds an unsteered, prompt-engineered answer for comparison.
 
 Start the frontend:
 
@@ -73,7 +76,8 @@ Start the frontend:
 streamlit run mindshift/frontend/app.py
 ```
 
-Set `USE_MOCK_API=true` to preview the UI without a loaded backend.
+Set `USE_MOCK_API=true` to preview the UI without a loaded backend. Mock mode
+returns canned text (clearly labeled in the UI), never model output.
 
 ## Verify
 
@@ -81,6 +85,13 @@ Run the automated tests:
 
 ```bash
 pytest -q
+```
+
+Real-model check of the model runtime and steering hook (downloads the model;
+run on the GPU machine):
+
+```bash
+python -m scripts.model_smoke_test
 ```
 
 Check a running backend:
@@ -108,18 +119,14 @@ python scripts/evaluate.py --layer 12 --output eval_results.md
 Review each output and replace its manual fluency-note placeholder before
 presenting results.
 
-## Current integration boundary
+## Integration boundary
 
-The HTTP layer depends only on the `GenerationService` protocol. The model
-runtime should be wrapped in an implementation of this protocol and supplied
-with:
-
-```python
-app = create_app(service_factory=build_generation_service)
-```
-
-This keeps model loading, steering hooks, and vector construction separate
-from API validation and error handling.
+The HTTP layer depends only on the `GenerationService` protocol
+(`mindshift/backend/service.py`). `ModelGenerationService`
+(`mindshift/backend/generation_service.py`) implements it with `ModelRuntime`
+(`model_runtime.py`), the `SteeringHook` (`steering.py`) and `VectorRegistry`,
+and `main.py` loads it once through the FastAPI lifespan. Baseline and steered
+generations run sequentially with the same seed and decoding settings.
 
 ## Limitations
 

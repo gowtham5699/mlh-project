@@ -16,6 +16,25 @@ def repetition_ratio(text: str) -> float:
     return (len(tokens) - len(set(tokens))) / len(tokens)
 
 
+PIRATE_MARKERS = frozenset(
+    {
+        "arr", "arrr", "arrrr", "ahoy", "matey", "mateys", "ye", "yer", "aye", "avast",
+        "be", "hearty", "hearties", "landlubber", "landlubbers", "scallywag", "booty",
+        "plunder", "doubloons", "buccaneer", "captain", "crew", "ship", "sail", "seas",
+        "sea", "treasure", "shiver", "timbers", "yo", "ho", "nay", "ol'", "o'", "aboard",
+    }
+)
+
+
+def pirate_score(text: str) -> float:
+    """Return pirate-marker words per 100 word tokens (style-shift signal)."""
+    tokens = [token.casefold() for token in TOKEN_PATTERN.findall(text)]
+    if not tokens:
+        return 0.0
+    hits = sum(token in PIRATE_MARKERS for token in tokens)
+    return 100.0 * hits / len(tokens)
+
+
 def non_ascii_ratio(text: str) -> float:
     """Return the fraction of characters outside printable ASCII."""
     if not text:

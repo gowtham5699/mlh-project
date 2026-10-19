@@ -1,5 +1,5 @@
 torch>=2.4
-transformers>=4.51,<5
+transformers>=4.51
 fastapi>=0.115
 uvicorn[standard]>=0.30
 pydantic>=2.8

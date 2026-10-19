@@ -3,7 +3,7 @@ import pytest
 import torch
 from transformers import Qwen2Config, Qwen2ForCausalLM
 
-from backend.steering import (MODE_GENERATED, LayerOutputCapture, SteeringError, SteeringHook,
+from mindshift.backend.steering import (MODE_GENERATED, LayerOutputCapture, SteeringError, SteeringHook,
                               apply_steering, count_hooks, get_decoder_layers)
 
 HIDDEN = 32

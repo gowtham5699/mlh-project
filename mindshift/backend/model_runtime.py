@@ -42,7 +42,10 @@ class ModelRuntime:
         logger.info("Loading %s on %s (%s)", self.model_id, self.device, self.dtype)
         t0 = time.time()
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
-        self.model = AutoModelForCausalLM.from_pretrained(self.model_id, dtype=self.dtype)
+        try:  # transformers >= 4.56 / 5.x
+            self.model = AutoModelForCausalLM.from_pretrained(self.model_id, dtype=self.dtype)
+        except TypeError:  # older transformers use torch_dtype
+            self.model = AutoModelForCausalLM.from_pretrained(self.model_id, torch_dtype=self.dtype)
         self.model.to(self.device)
         self.model.eval()
         for p in self.model.parameters():

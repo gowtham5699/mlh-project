@@ -99,6 +99,16 @@ def create_app(
     return api
 
 
-# The runtime team can supply its loader as:
-# app = create_app(service_factory=build_generation_service)
-app = create_app()
+def _load_service() -> GenerationService:
+    # Imported lazily so importing this module (e.g. in tests) does not pull in torch.
+    from .generation_service import build_generation_service
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    return build_generation_service()
+
+
+# `uvicorn mindshift.backend.main:app` loads the model once at startup.
+app = create_app(service_factory=_load_service)
